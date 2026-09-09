@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "linkedin_post_generator": "./iterative_tools.py:app",
+    "sql_data_analyst_agent": "./sql_agent.py:sql_agent_app"
+  },
+  "env": ".env"
+}
