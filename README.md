@@ -18,9 +18,10 @@ A production-grade, end-to-end repository mastering **Agentic AI Architecture** 
   - [1. Sequential Pipeline (`seuential_base.py`)](#1-sequential-pipeline-seuential_basepy)
   - [2. Parallel Branching & Reducers (`parallel_reducer.py`)](#2-parallel-branching--reducers-parallel_reducerpy)
   - [3. Multi-Route Conditional RAG (`conditional_rag.py` & `campus_rag_app.py`)](#3-multi-route-conditional-rag-conditional_ragpy--campus_rag_apppy)
-  - [4. Iterative Self-Correction Agent (`iterative_tools.py`)](#4-iterative-self-correction-agent-iterative_toolspy)
-  - [5. Self-Correcting ReAct SQL Analyst (`sql_agent.py` & `sql_app.py`)](#5-self-correcting-react-sql-analyst-sql_agentpy--sql_apppy)
-  - [6. Human-in-the-Loop HITL (`humanintheloop.py`)](#6-human-in-the-loop-hitl-humaninthelooppy)
+  - [4. Iterative Workflows (Self-Correction & Feedback Loops)](#4-iterative-workflows-self-correction--feedback-loops)
+    - [4A. Evaluator-Optimizer Loop (`iterative_tools.py`)](#4a-evaluator-optimizer-loop-iterative_toolspy)
+    - [4B. Environment-Driven ReAct SQL Agent (`sql_agent.py` & `sql_app.py`)](#4b-environment-driven-react-sql-agent-sql_agentpy--sql_apppy)
+  - [5. Human-in-the-Loop HITL (`humanintheloop.py`)](#5-human-in-the-loop-hitl-humaninthelooppy)
 - [Repository Structure](#-repository-structure)
 - [Technology Stack](#-technology-stack)
 - [Interactive Streamlit Web Apps](#-interactive-streamlit-web-apps)
@@ -101,7 +102,15 @@ flowchart TD
 
 ---
 
-### 4. Iterative Self-Correction Agent (`iterative_tools.py`)
+### 4. Iterative Workflows (Self-Correction & Feedback Loops)
+
+Iterative workflows are central to Agentic AI. To master them completely, this repository implements the **two fundamental flavors** of self-correcting loops:
+1. **Semantic Evaluator-Optimizer**: An LLM reviewer evaluates text against qualitative rubrics and gives feedback for rewrites.
+2. **Environment-Driven ReAct**: The agent interacts with a live runtime (database/compiler/tools) and fixes runtime errors autonomously.
+
+---
+
+#### 4A. Evaluator-Optimizer Loop (`iterative_tools.py`)
 An autonomous writer-and-critic loop that writes content, searches the live web for fresh facts via Tavily, and submits the draft to a strict reviewer. If rejected, it rewrites the draft incorporating specific feedback until approved or hitting max attempts.
 
 ```mermaid
@@ -115,33 +124,55 @@ flowchart TD
     reviewer -->|REJECTED with feedback| writer
 ```
 
-- **Core Concept**: Self-correcting feedback loop with `ToolNode` and conditional edges.
+- **Core Concept**: Self-correcting feedback loop guided by an LLM Evaluator (`reviewer_node`) and conditional edges (`should_stop_looping`).
 
 ---
 
-### 5. Self-Correcting ReAct SQL Analyst (`sql_agent.py` & `sql_app.py`)
-An enterprise-grade ReAct data analyst agent connected to SQLite (`company.db`). The agent introspects schemas, writes SQL queries, automatically fixes syntax/case-sensitivity errors, and falls back to Tavily web search for industry benchmarks.
+#### 4B. Environment-Driven ReAct SQL Agent (`sql_agent.py` & `sql_app.py`)
+An enterprise-grade ReAct data analyst agent connected to a real SQLite database (`company.db`). The agent introspects schemas, writes SQL queries, automatically self-corrects syntax/case-sensitivity errors reported by SQLite, and falls back to Tavily web search for industry benchmarks.
 
 ```mermaid
 flowchart TD
     START([START]) --> agent[Agent LLM Node<br/><i>GPT-OSS 120B</i>]
     agent -->|tools_condition| condition{Has Tool Calls?}
     condition -->|YES| tool_node[ToolNode Execution]
-    subgraph Tools Available
-        tool_node --> t1[list_tables]
-        tool_node --> t2[get_table_schema]
-        tool_node --> t3[execute_sql_query]
-        tool_node --> t4[tavily_search]
+
+    subgraph tools_group ["Available Tools"]
+        t1[list_tables]
+        t2[get_table_schema]
+        t3[execute_sql_query]
+        t4[tavily_search]
     end
-    Tools Available --> agent
+
+    tool_node -.-> t1
+    tool_node -.-> t2
+    tool_node -.-> t3
+    tool_node -.-> t4
+
+    tool_node -->|Return ToolMessage| agent
     condition -->|NO| END_NODE([END])
 ```
 
+- **Core Concept**: Autonomous error-healing in a live execution environment using LangGraph's pre-built `ToolNode` and `tools_condition`.
 - **Features**: Case-insensitive SQLite execution (`COLLATE NOCASE`), dynamic error retry, and complete Streamlit dashboard in [`sql_app.py`](sql_app.py).
 
 ---
 
-### 6. Human-in-the-Loop HITL (`humanintheloop.py`)
+### 💡 Comparison: The Two Flavors of Iterative Workflows
+
+| Dimension | 4A. Evaluator-Optimizer Loop ([`iterative_tools.py`](iterative_tools.py)) | 4B. Environment ReAct Self-Correction ([`sql_agent.py`](sql_agent.py)) |
+| :--- | :--- | :--- |
+| **Primary Goal** | Perfecting content quality & adhering to strict rubrics | Autonomous task execution & environment error-healing |
+| **Feedback Source** | **Semantic / LLM Reviewer** (Evaluator Node) | **Deterministic / Tool Runtime** (SQLite DB / Compiler / API) |
+| **Feedback Type** | Natural language critique (`"Lacks hook, add CTA"`) | Exact error message (`"no such column: Engineering"`) |
+| **Routing Mechanism**| Custom conditional edge (`should_stop_looping`) | Pre-built `tools_condition` checking `tool_calls` |
+| **Loop Structure** | `Writer ➔ ToolNode ➔ Writer ➔ Reviewer ➔ Writer` | `Agent ➔ ToolNode ➔ Agent (ReAct cycle)` |
+| **Max Retry Guard** | Counter in state (`attempt >= 3`) | Graph recursion limit (`recursion_limit=25`) |
+| **Real-World Uses** | Marketing copy, code generation with reviewer, PR drafting | Autonomous SQL analysis, API retries, terminal debugging |
+
+---
+
+### 5. Human-in-the-Loop HITL (`humanintheloop.py`)
 Demonstrates modern LangGraph HITL using the runtime `interrupt()` primitive, `Command(resume=...)`, and thread persistence via `MemorySaver`.
 
 ```mermaid
@@ -154,10 +185,10 @@ sequenceDiagram
 
     App->>Node: Execute workflow with thread_id
     Note over Node: Check refund amount ($500)
-    Node->>App: interrupt(payload={"question": "Approve $500?"})
+    Node->>App: interrupt(approval request payload)
     App->>Memory: Freeze state & save checkpoint
     App-->>User: Workflow pauses; UI presents approval prompt
-    User->>App: app.invoke(Command(resume={"approved": True, "note": "OK"}))
+    User->>App: app.invoke(Command(resume=decision))
     App->>Memory: Load checkpoint for thread_id
     App->>Node: Inject resume value into interrupt() call
     Note over Node: Resumes execution immediately!
